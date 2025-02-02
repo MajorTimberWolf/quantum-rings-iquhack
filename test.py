@@ -6,6 +6,7 @@ from QuantumRingsLib import JobStatus
 from matplotlib import pyplot as plt
 import numpy as np
 import math
+from fractions import Fraction
 
 # Initialize QuantumRings provider
 provider = QuantumRingsProvider(
@@ -15,106 +16,120 @@ provider = QuantumRingsProvider(
 backend = provider.get_backend("scarlet_quantum_rings")
 provider.active_account()
 
-def iqft_cct(qc, q, n):
-    """
-    Quantum Fourier Transform inverse implementation
-    Args:
-        qc (QuantumCircuit): The quantum circuit
-        q (QuantumRegister): The quantum register
-        n (int): Number of qubits
-    """
+def calculate_required_qubits(N):
+    n = len(bin(N)) - 2  # Number of bits in N
+    n_count = 2 * n      # Qubits for phase estimation
+    n_register = n       # Qubits for the number to factor
+    n_ancilla = n        # Ancilla qubits needed for multiplication
+    return n_count, n_register, n_ancilla
+
+def qft(qc, q, start, n):
+    """Apply QFT to n qubits starting at index start."""
+    for j in range(n):
+        for k in range(j):
+            qc.cu1(math.pi / (2 ** (j - k)), q[start + k], q[start + j])
+        qc.h(q[start + j])
+    # Reverse qubit order
+    for j in range(n//2):
+        qc.swap(q[start + j], q[start + n - j - 1])
+
+def iqft(qc, q, start, n):
+    """Apply inverse QFT to n qubits starting at index start."""
+    for j in range(n//2):
+        qc.swap(q[start + j], q[start + n - j - 1])
+    for j in reversed(range(n)):
+        qc.h(q[start + j])
+        for k in reversed(range(j)):
+            qc.cu1(-math.pi / (2 ** (j - k)), q[start + k], q[start + j])
+
+def controlled_add(qc, control, target_start, target, c, n):
+    """Controlled addition of classical constant c to target register."""
+    qft(qc, target, target_start, n)
     for i in range(n):
-        for j in range(1, i+1):
-            # Ensure angles are within valid range
-            angle = -math.pi / float(2**(i-j+1))
-            qc.cu1(angle, q[j-1], q[i])
+        angle = 2 * math.pi * (c << (n - i - 1)) / (2 ** n)
+        qc.cu1(angle, control, target[target_start + i])
+    iqft(qc, target, target_start, n)
+
+def controlled_modular_multiply(qc, control, x_start, x_reg, ancilla_start, a, N, n):
+    """Controlled modular multiplication by a mod N."""
+    # Reset ancilla qubits
+    for i in range(n):
+        qc.reset(x_reg[ancilla_start + i])
+    
+    # Compute (x * a) mod N into ancilla
+    for i in range(n):
+        if (a >> i) & 1:
+            shifted_val = (1 << i) % N
+            for j in range(n):
+                if (shifted_val >> j) & 1:
+                    qc.ccx(control, x_reg[x_start + j], x_reg[ancilla_start + j])
+    
+    # Copy result back to x_reg
+    for i in range(n):
+        qc.cswap(control, x_reg[x_start + i], x_reg[ancilla_start + i])
+    
+    # Uncompute ancilla
+    for i in range(n):
+        qc.reset(x_reg[ancilla_start + i])
+
+def create_shor_circuit(N, a=7):
+    # Calculate required qubits for each register
+    n_count, n_register, n_ancilla = calculate_required_qubits(N)
+    total_qubits = n_count + n_register + n_ancilla
+    
+    # Create registers
+    q = QuantumRegister(total_qubits, 'q')  # All quantum bits in one register
+    c = ClassicalRegister(n_count, 'c')     # Classical bits for measurement
+    qc = QuantumCircuit(q, c)
+    
+    # Define start indices for different register sections
+    count_start = 0
+    register_start = n_count
+    ancilla_start = n_count + n_register
+    
+    # Initialize counting register
+    for i in range(n_count):
         qc.h(q[i])
     qc.barrier()
-
-def create_modular_multiplication(qc, q, x, N):
-    """
-    Creates a modular multiplication circuit based on the example circuit
-    Args:
-        qc (QuantumCircuit): The quantum circuit
-        q (QuantumRegister): The quantum register
-        x (int): Multiplier
-        N (int): Modulus
-    """
-    # Using the working structure from the example code
-    qc.cx(q[2], q[4])
-    qc.cx(q[2], q[5])
-    qc.cx(q[6], q[4])
-    qc.ccx(q[1], q[5], q[3])
-    qc.cx(q[3], q[5])
-    qc.ccx(q[1], q[4], q[6])
-    qc.cx(q[6], q[4])
-
-def shors_circuit(N, shots=1024):
-    """
-    Creates Shor's algorithm circuit following the working example structure
-    Args:
-        N (int): Number to factor
-        shots (int): Number of circuit runs
-    Returns:
-        tuple: (circuit, measurement results)
-    """
-    # Use the same structure as the working example
-    numberofqubits = 7  # Fixed size as per example
-    q = QuantumRegister(numberofqubits, 'q')
-    c = ClassicalRegister(4, 'c')
-    qc = QuantumCircuit(q, c)
-
-    # Initialize source and target registers (following example)
-    qc.h(0)
-    qc.h(1)
-    qc.h(2)
-    qc.x(6)
+    
+    # Initialize computational register to |1>
+    qc.x(q[register_start])
     qc.barrier()
-
-    # Modular exponentiation (using 7 as coprime)
-    create_modular_multiplication(qc, q, 7, N)
-    qc.barrier()
-
+    
+    # Apply controlled modular multiplications
+    for i in range(n_count):
+        power = pow(a, 2 ** i, N)
+        controlled_modular_multiply(qc, q[i], register_start, q, ancilla_start, power, N, n_register)
+        qc.barrier()
+    
     # Apply inverse QFT
-    iqft_cct(qc, q, 3)  # Apply to first 3 qubits as per example
+    iqft(qc, q, count_start, n_count)
+    
+    # Measure counting register
+    for i in range(n_count):
+        qc.measure(q[i], c[i])
+    
+    return qc, n_count
 
-    # Measure
-    qc.measure(q[0], c[0])
-    qc.measure(q[1], c[1])
-    qc.measure(q[2], c[2])
+def continued_fraction_expansion(measurement, n_count, N):
+    measured_value = int(measurement, 2)
+    phase = measured_value / (2 ** n_count)
+    frac = Fraction(phase).limit_denominator(N)
+    return frac.denominator
 
-    # Execute circuit
-    try:
-        job = backend.run(qc, shots=shots)
-        job_monitor(job)
-        result = job.result()
-        counts = result.get_counts()
-        return qc, counts
-    except Exception as e:
-        print(f"Circuit execution error: {str(e)}")
-        return qc, None
+def find_factors(N, period, a):
+    if period % 2 != 0:
+        return None
+    x = pow(a, period // 2, N)
+    if x == 1 or x == N - 1:
+        return None
+    factor1 = math.gcd(x + 1, N)
+    factor2 = math.gcd(x - 1, N)
+    if factor1 * factor2 == N and 1 < factor1 < N and 1 < factor2 < N:
+        return factor1, factor2
+    return None
 
-def plot_histogram(counts, title=""):
-    """
-    Plots histogram of measurement results
-    """
-    if counts is None:
-        print("No counts to plot")
-        return
-        
-    fig, ax = plt.subplots(figsize=(10, 7))
-    plt.xlabel("Measured State")
-    plt.ylabel("Counts")
-    mylist = [key for key, val in counts.items() for _ in range(val)]
-    unique, inverse = np.unique(mylist, return_inverse=True)
-    bin_counts = np.bincount(inverse)
-    plt.bar(unique, bin_counts)
-    maxFreq = max(counts.values())
-    plt.ylim(ymax=np.ceil(maxFreq / 10) * 10 if maxFreq % 10 else maxFreq + 10)
-    plt.title(title)
-    plt.show()
-
-# Test with provided semiprimes
+# Test with semiprimes
 semiprimes = {
     8: 143,
     10: 899,
@@ -124,24 +139,31 @@ semiprimes = {
 for bits, N in semiprimes.items():
     print(f"\nFactoring {N} ({bits} bits):")
     try:
-        # Create and execute circuit
-        circuit, counts = shors_circuit(N)
+        a = 7  # Ensure a is coprime to N
+        qc, n_count = create_shor_circuit(N, a)
+        job = backend.run(qc, shots=1024)
+        job_monitor(job)
+        counts = job.result().get_counts()
         
-        # Draw circuit
-        print("Drawing circuit...")
-        circuit.draw('mpl')
+        print(f"Circuit depth: {qc.depth()}, Qubits: {qc.num_qubits}")
+        for measurement, count in counts.items():
+            if count > 50:  # Only process measurements with significant counts
+                period = continued_fraction_expansion(measurement, n_count, N)
+                factors = find_factors(N, period, a)
+                if factors:
+                    print(f"Factors: {factors[0]} × {factors[1]}")
+                    break
         
-        # Plot results if available
-        if counts:
-            print("Plotting results...")
-            plot_histogram(counts, f"Quantum Phase Estimation Results for N={N}")
-            print("Measurement counts:", counts)
+        plt.figure()
+        plt.bar(counts.keys(), counts.values())
+        plt.title(f"N={N} Measurement Results")
+        plt.show()
         
     except Exception as e:
-        print(f"Error processing {N}: {str(e)}")
+        print(f"Error: {str(e)}")
     finally:
         try:
-            del circuit
+            del qc
         except:
             pass
 
