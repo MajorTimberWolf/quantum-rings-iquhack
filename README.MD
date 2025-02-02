@@ -1,6 +1,9 @@
 # Quantum Factoring via Quantum Rings Simulator
 
-This repository contains a Python implementation of a version of Shor's algorithm using the Quantum Rings simulator. The code, built with the `QuantumRingsLib` library, is designed to factor semiprime numbers by employing the order-finding subroutine at the core of Shor's algorithm. If you'd like to know my Thoughts during this whole hackathon, they can be found [here](https://github.com/MajorTimberWolf/quantum-rings-iquhack/blob/main/THOUGHTS.MD) + an article regarding this implementation coming soon :)
+This repository contains a Python implementation of a version of Shor's algorithm using the Quantum Rings simulator. The code, built with the `QuantumRingsLib` library, is designed to factor semiprime numbers by employing the order-finding subroutine at the core of Shor's algorithm. If you'd like to know my thoughts during this whole hackathon, they can be found [here](https://github.com/MajorTimberWolf/quantum-rings-iquhack/blob/main/THOUGHTS.MD). An article regarding this implementation is coming soon :)
+
+
+For a more detailed explanation, including mathematical formulas and deeper analysis, please refer to the [Overleaf document](https://www.overleaf.com/read/zjdznvvhwcvk#c7e73f).
 
 ## Overview
 
@@ -30,7 +33,7 @@ The implementation follows these key steps:
 
 ## Code
 
-The full implementation is available in the [linked repository](https://github.com/MajorTimberWolf/quantum-rings-iquhack).
+The full implementation is available in the [linked repository](https://github.com/MajorTimberWolf/quantum-rings-iquhack)
 
 ## Results
 
