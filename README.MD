@@ -30,7 +30,7 @@ The implementation follows these key steps:
 
 ## Code
 
-The full implementation is available in the [linked repository](link-to-your-github-repo).
+The full implementation is available in the [linked repository](https://github.com/MajorTimberWolf/quantum-rings-iquhack).
 
 ## Results
 
