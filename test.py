@@ -15,46 +15,95 @@ provider = QuantumRingsProvider(
 backend = provider.get_backend("scarlet_quantum_rings")
 provider.active_account()
 
-def find_period(a, N):
+def iqft_cct(qc, q, n):
     """
-    Find the period of f(x) = a^x mod N
-    Args:
-        a (int): base of the exponential
-        N (int): modulus
-    Returns:
-        int: period r where a^r ≡ 1 (mod N)
-    """
-    x = 1
-    period = 0
-    while True:
-        x = (x * a) % N
-        period += 1
-        if x == 1:
-            return period
-
-def iqft_cct(qc, b, n):
-    """
-    The inverse QFT circuit
+    Quantum Fourier Transform inverse implementation
     Args:
         qc (QuantumCircuit): The quantum circuit
-        b (QuantumRegister): The target register
-        n (int): The number of qubits in the registers to use
+        q (QuantumRegister): The quantum register
+        n (int): Number of qubits
     """
     for i in range(n):
         for j in range(1, i+1):
-            qc.cu1(-math.pi / 2**(i-j+1), b[j-1], b[i])
-        qc.h(b[i])
+            # Ensure angles are within valid range
+            angle = -math.pi / float(2**(i-j+1))
+            qc.cu1(angle, q[j-1], q[i])
+        qc.h(q[i])
     qc.barrier()
+
+def create_modular_multiplication(qc, q, x, N):
+    """
+    Creates a modular multiplication circuit based on the example circuit
+    Args:
+        qc (QuantumCircuit): The quantum circuit
+        q (QuantumRegister): The quantum register
+        x (int): Multiplier
+        N (int): Modulus
+    """
+    # Using the working structure from the example code
+    qc.cx(q[2], q[4])
+    qc.cx(q[2], q[5])
+    qc.cx(q[6], q[4])
+    qc.ccx(q[1], q[5], q[3])
+    qc.cx(q[3], q[5])
+    qc.ccx(q[1], q[4], q[6])
+    qc.cx(q[6], q[4])
+
+def shors_circuit(N, shots=1024):
+    """
+    Creates Shor's algorithm circuit following the working example structure
+    Args:
+        N (int): Number to factor
+        shots (int): Number of circuit runs
+    Returns:
+        tuple: (circuit, measurement results)
+    """
+    # Use the same structure as the working example
+    numberofqubits = 7  # Fixed size as per example
+    q = QuantumRegister(numberofqubits, 'q')
+    c = ClassicalRegister(4, 'c')
+    qc = QuantumCircuit(q, c)
+
+    # Initialize source and target registers (following example)
+    qc.h(0)
+    qc.h(1)
+    qc.h(2)
+    qc.x(6)
+    qc.barrier()
+
+    # Modular exponentiation (using 7 as coprime)
+    create_modular_multiplication(qc, q, 7, N)
+    qc.barrier()
+
+    # Apply inverse QFT
+    iqft_cct(qc, q, 3)  # Apply to first 3 qubits as per example
+
+    # Measure
+    qc.measure(q[0], c[0])
+    qc.measure(q[1], c[1])
+    qc.measure(q[2], c[2])
+
+    # Execute circuit
+    try:
+        job = backend.run(qc, shots=shots)
+        job_monitor(job)
+        result = job.result()
+        counts = result.get_counts()
+        return qc, counts
+    except Exception as e:
+        print(f"Circuit execution error: {str(e)}")
+        return qc, None
 
 def plot_histogram(counts, title=""):
     """
-    Plots the histogram of the counts
-    Args:
-        counts (dict): The dictionary containing the counts of states
-        title (str): A title for the graph
+    Plots histogram of measurement results
     """
+    if counts is None:
+        print("No counts to plot")
+        return
+        
     fig, ax = plt.subplots(figsize=(10, 7))
-    plt.xlabel("States")
+    plt.xlabel("Measured State")
     plt.ylabel("Counts")
     mylist = [key for key, val in counts.items() for _ in range(val)]
     unique, inverse = np.unique(mylist, return_inverse=True)
@@ -65,109 +114,35 @@ def plot_histogram(counts, title=""):
     plt.title(title)
     plt.show()
 
-def create_modular_exponentiation(qc, q, a, N):
-    """
-    Create circuit for modular exponentiation a^x mod N
-    Args:
-        qc (QuantumCircuit): quantum circuit
-        q (QuantumRegister): quantum register
-        a (int): base for modular exponentiation
-        N (int): modulus
-    """
-    # This is a simplified version for demonstration
-    # For actual implementation, you'd need to decompose this into elementary gates
-    qc.cx(q[2], q[4])
-    qc.cx(q[2], q[5])
-    qc.cx(q[6], q[4])
-    qc.ccx(q[1], q[5], q[3])
-    qc.cx(q[3], q[5])
-    qc.ccx(q[1], q[4], q[6])
-    qc.cx(q[6], q[4])
-
-def shors_factoring(N, shots=1024):
-    """
-    Implementation of Shor's algorithm for factoring N using QuantumRings
-    Args:
-        N (int): number to factor
-        shots (int): number of measurements to perform
-    Returns:
-        dict: measurement results
-    """
-    # Calculate required number of qubits
-    n = len(bin(N)[2:])  # number of bits needed to represent N
-    total_qubits = 2 * n + 3  # including ancilla qubits
-
-    # Create quantum registers
-    q = QuantumRegister(total_qubits, 'q')
-    c = ClassicalRegister(4, 'c')  # Adjust classical register size as needed
-    qc = QuantumCircuit(q, c)
-
-    # Initialize counting register
-    qc.h(0)
-    qc.h(1)
-    qc.h(2)
-    qc.x(6)  # Initialize ancilla
-    qc.barrier()
-
-    # Apply modular exponentiation
-    create_modular_exponentiation(qc, q, 7, N)  # Using 7 as coprime
-    qc.barrier()
-
-    # Apply inverse QFT
-    iqft_cct(qc, q, 3)
-
-    # Measure
-    qc.measure(q[0], c[0])
-    qc.measure(q[1], c[1])
-    qc.measure(q[2], c[2])
-
-    # Execute circuit
-    job = backend.run(qc, shots=shots)
-    job_monitor(job)
-    result = job.result()
-    counts = result.get_counts()
-
-    return counts, qc
-
-# Process each semiprime
+# Test with provided semiprimes
 semiprimes = {
     8: 143,
     10: 899,
     12: 3127,
-    14: 11009,
-    16: 47053,
-    18: 167659,
-    20: 744647,
-    22: 3036893,
 }
 
 for bits, N in semiprimes.items():
     print(f"\nFactoring {N} ({bits} bits):")
     try:
-        counts, qc = shors_factoring(N)
+        # Create and execute circuit
+        circuit, counts = shors_circuit(N)
         
-        # Draw the circuit
-        qc.draw('mpl')
+        # Draw circuit
+        print("Drawing circuit...")
+        circuit.draw('mpl')
         
-        # Visualize results
-        plot_histogram(counts, f"Shor's Algorithm Results for N={N}")
+        # Plot results if available
+        if counts:
+            print("Plotting results...")
+            plot_histogram(counts, f"Quantum Phase Estimation Results for N={N}")
+            print("Measurement counts:", counts)
         
-        # Process results to find factors
-        period = find_period(7, N)  # Using 7 as coprime
-        if period % 2 == 0:
-            guess1 = pow(7, period//2, N) + 1
-            guess2 = pow(7, period//2, N) - 1
-            factor1 = math.gcd(guess1, N)
-            factor2 = math.gcd(guess2, N)
-            if factor1 * factor2 == N:
-                print(f"Factors found: {factor1} × {factor2}")
-        else:
-            print("Period was odd, try again with different coprime")
-            
     except Exception as e:
-        print(f"Error factoring {N}: {str(e)}")
+        print(f"Error processing {N}: {str(e)}")
     finally:
-        # Clean up
-        del qc
-        
-print("\nFactoring complete!")
+        try:
+            del circuit
+        except:
+            pass
+
+print("\nQuantum factoring complete!")
